@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "my-tauri-app",
+  "productName": "Solar Compass",
   "version": "0.1.0",
-  "identifier": "com.my-tauri-app.com",
+  "identifier": "app.solarcompass",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "my-tauri-app",
+        "title": "Solar Compass",
         "width": 800,
         "height": 600
       }
