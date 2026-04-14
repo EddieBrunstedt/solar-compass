@@ -19,7 +19,7 @@ pnpm tauri android build --apk --target aarch64 && \
   adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 ```
 
-Output APK is ~6 MB. Fully offline — sun position is computed locally with `suncalc`.
+Output APK is ~6 MB. Sun math runs locally with `suncalc`; GPS uses Android's location provider. Only the manual place-picker search talks to the network (Open-Meteo geocoding).
 
 If signing keys ever change, Android refuses `-r`; uninstall first:
 
@@ -51,7 +51,7 @@ This regenerates all Android mipmap densities under `src-tauri/gen/android/app/s
 - `src-tauri/gen/android/app/src/main/AndroidManifest.xml` — portrait lock (`android:screenOrientation="portrait"`)
 - `src-tauri/Cargo.toml` — release profile (`lto`, `codegen-units = 1`, `strip`)
 
-Hardcoded location: Stockholm (`59.3293, 18.0686`) in `src/App.tsx`. Swap for your own coords until GPS is wired up.
+Location: GPS is requested on first launch. If denied or unavailable and there's no cached fix, the picker auto-opens so you can search for a place (Open-Meteo) — no hardcoded fallback. Tap the pill in the top-right corner any time to switch location or re-trigger a GPS fix. The chosen location is cached in `localStorage` under `solar-compass:location`.
 
 ## Regenerating the Android project
 
