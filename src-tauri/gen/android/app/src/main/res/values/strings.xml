@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">my-tauri-app</string>
-    <string name="main_activity_title">my-tauri-app</string>
+    <string name="app_name">Solar Compass</string>
+    <string name="main_activity_title">Solar Compass</string>
 </resources>

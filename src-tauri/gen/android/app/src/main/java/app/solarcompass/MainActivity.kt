@@ -1,4 +1,4 @@
-package com.my_tauri_app.com
+package app.solarcompass
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge
