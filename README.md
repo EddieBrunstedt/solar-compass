@@ -1,6 +1,6 @@
 # Solar Compass
 
-A solar-azimuth reference card: shows a dial with the sun's current bearing from true north for Stockholm. Point the top of the phone along the arrow to the real sun, and you know where north is — no magnetometer needed.
+A pocket reference for finding true north without a magnetometer — or a GPS, or a network. Pick a technique that fits your conditions: during the day, line up with the sun's current azimuth; at night, find Polaris via the Big Dipper. More methods are planned (moon, Southern Cross, bright-star azimuths) so the app stays useful under whatever sky you've got.
 
 Tauri 2 + SolidJS + TypeScript + Vite. Target: Android (aarch64). Linux desktop also buildable if webkit2gtk-4.1 is installed.
 
@@ -19,7 +19,7 @@ pnpm tauri android build --apk --target aarch64 && \
   adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 ```
 
-Output APK is ~6 MB. Sun math runs locally with `suncalc`; GPS uses Android's location provider. Only the manual place-picker search talks to the network (Open-Meteo geocoding).
+Output APK is ~6 MB. Math runs locally (`suncalc` for sun, hand-rolled geometry for Polaris). GPS uses Android's location provider. Only the manual place-picker search talks to the network (Open-Meteo geocoding).
 
 If signing keys ever change, Android refuses `-r`; uninstall first:
 
@@ -45,13 +45,31 @@ This regenerates all Android mipmap densities under `src-tauri/gen/android/app/s
 
 ## Where the code lives
 
-- `src/App.tsx` — all the UI and sun-math logic
-- `src/App.css` — all styling
+- `src/App.tsx` — thin router: owns shared state (location, time, viewport), renders the current method, hosts both pickers
+- `src/types.ts` — `Location`, `MethodCtx`, `Dep`, `MethodDescriptor`
+- `src/methods/` — one file per bearing technique; see below
+- `src/App.css` — global styles + picker + per-method styles
 - `index.html` — viewport meta (zoom disabled)
 - `src-tauri/gen/android/app/src/main/AndroidManifest.xml` — portrait lock (`android:screenOrientation="portrait"`)
 - `src-tauri/Cargo.toml` — release profile (`lto`, `codegen-units = 1`, `strip`)
 
-Location: GPS is requested on first launch. If denied or unavailable and there's no cached fix, the picker auto-opens so you can search for a place (Open-Meteo) — no hardcoded fallback. Tap the pill in the top-right corner any time to switch location or re-trigger a GPS fix. The chosen location is cached in `localStorage` under `solar-compass:location`.
+### Adding a method
+
+Each method is a single self-contained file that default-exports a `MethodDescriptor`. To add one:
+
+1. Create `src/methods/<your-method>.tsx`. Default-export an object with `satisfies MethodDescriptor` (preserves the literal `id` for the derived `MethodId` union). Fields: `id`, `name`, `tagline`, `when`, `icon`, `computeDeps`, `render`.
+2. Use the `dep.met / dep.unmet / dep.unknown` helpers from `./deps` to build the dependency list — don't write dep object literals.
+3. Import and append it in `src/methods/index.tsx`'s `METHODS` array. That's the only touch outside your new file.
+
+The picker, storage key, and type union all flow from `METHODS` automatically.
+
+### Location
+
+GPS is requested on first launch. If denied or unavailable and there's no cached fix, the location picker auto-opens so you can search for a place (Open-Meteo) — no hardcoded fallback. Tap the pill in the top-right any time to switch location or re-trigger a GPS fix. The chosen location is cached in `localStorage` under `solar-compass:location`.
+
+### Method selection
+
+Tap the pill in the top-left to change method. The last selection is persisted under `solar-compass:method` and is the landing screen on subsequent launches. First-ever launch opens the method picker non-dismissable.
 
 ## Regenerating the Android project
 
