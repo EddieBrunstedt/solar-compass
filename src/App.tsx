@@ -2,12 +2,11 @@ import {
   createSignal,
   onCleanup,
   onMount,
-  createMemo,
   createEffect,
+  createMemo,
   For,
   Show,
 } from "solid-js";
-import SunCalc from "suncalc";
 import { invoke } from "@tauri-apps/api/core";
 import {
   getCurrentPosition,
@@ -15,36 +14,13 @@ import {
   requestPermissions,
 } from "@tauri-apps/plugin-geolocation";
 import "./App.css";
-
-type LocationSource = "gps" | "manual";
-type Location = {
-  lat: number;
-  lon: number;
-  source: LocationSource;
-  name?: string;
-  fixedAt: number;
-};
+import type { Location, MethodCtx, Viewport } from "./types";
+import { getMethod, type MethodId } from "./methods";
+import { loadMethodId, saveMethodId } from "./methods/storage";
+import { MethodPicker } from "./methods/MethodPicker";
 
 const STORAGE_KEY = "solar-compass:location";
-const MARGIN = 40;
-const TOP_OFFSET = 32;
-const TICK_ANGLES = Array.from({ length: 12 }, (_, i) => i * 30);
 const GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search";
-
-function sunBearingFromNorth(date: Date, lat: number, lon: number): number {
-  const { azimuth } = SunCalc.getPosition(date, lat, lon);
-  const deg = (azimuth * 180) / Math.PI + 180;
-  return ((deg % 360) + 360) % 360;
-}
-
-function sunAltitudeDeg(date: Date, lat: number, lon: number): number {
-  return (SunCalc.getPosition(date, lat, lon).altitude * 180) / Math.PI;
-}
-
-function circlePoint(bearingDeg: number, cx: number, cy: number, r: number) {
-  const rad = (bearingDeg * Math.PI) / 180;
-  return { x: cx + r * Math.sin(rad), y: cy - r * Math.cos(rad) };
-}
 
 function loadLocation(): Location | null {
   try {
@@ -104,13 +80,16 @@ async function searchPlaces(query: string): Promise<GeocodeResult[]> {
 
 function App() {
   const [now, setNow] = createSignal(new Date());
-  const [swap, setSwap] = createSignal(false);
-  const [viewport, setViewport] = createSignal({
+  const [viewport, setViewport] = createSignal<Viewport>({
     w: window.innerWidth,
     h: window.innerHeight,
   });
   const [location, setLocation] = createSignal<Location | null>(loadLocation());
-  const [pickerOpen, setPickerOpen] = createSignal(false);
+  const [locPickerOpen, setLocPickerOpen] = createSignal(false);
+  const [methodId, setMethodId] = createSignal<MethodId | null>(loadMethodId());
+  const [methodPickerOpen, setMethodPickerOpen] = createSignal(
+    methodId() === null,
+  );
   const [gpsPerm, setGpsPerm] = createSignal<
     "unknown" | "granted" | "denied" | "prompt"
   >("unknown");
@@ -163,6 +142,7 @@ function App() {
         console.log("[gps] post-request perm:", perm);
       }
       if (perm !== "granted") {
+        if (!location() && !methodPickerOpen()) setLocPickerOpen(true);
         return;
       }
       setGpsFetch("fetching");
@@ -199,7 +179,7 @@ function App() {
         clearTimeout(safety);
       }
     } finally {
-      if (!location()) setPickerOpen(true);
+      if (!location() && !methodPickerOpen()) setLocPickerOpen(true);
       gpsInFlight = false;
       console.log(
         "[gps] end. perm:",
@@ -221,7 +201,13 @@ function App() {
     };
     setLocation(next);
     saveLocation(next);
-    setPickerOpen(false);
+    setLocPickerOpen(false);
+  }
+
+  function pickMethod(id: MethodId) {
+    setMethodId(id);
+    saveMethodId(id);
+    setMethodPickerOpen(false);
   }
 
   onMount(() => {
@@ -239,45 +225,22 @@ function App() {
       .catch(() => setUse24h(null));
   });
 
-  const loc = () => location();
-  const hasLoc = () => loc() !== null;
+  const ctx: MethodCtx = {
+    location,
+    now,
+    viewport,
+    use24h,
+    openLocationPicker: () => setLocPickerOpen(true),
+    openMethodPicker: () => setMethodPickerOpen(true),
+  };
 
-  const sunBearing = createMemo(() => {
-    const l = loc();
-    return l ? sunBearingFromNorth(now(), l.lat, l.lon) : 0;
-  });
-  const sunAltitude = createMemo(() => {
-    const l = loc();
-    return l ? sunAltitudeDeg(now(), l.lat, l.lon) : 0;
-  });
-  const otherBearing = createMemo(() =>
-    swap() ? (360 - sunBearing()) % 360 : sunBearing(),
-  );
-
-  const cx = createMemo(() => viewport().w / 2);
-  const cy = createMemo(() => viewport().h / 2);
-  const radius = createMemo(
-    () => Math.min(viewport().w, viewport().h) / 2 - MARGIN,
-  );
-  const topPos = createMemo(() =>
-    circlePoint(0, cx(), cy(), radius() + TOP_OFFSET),
-  );
-  const otherPos = createMemo(() =>
-    circlePoint(otherBearing(), cx(), cy(), radius()),
-  );
-
-  const timeLabel = createMemo(() => {
-    const h24 = use24h();
-    const opts: Intl.DateTimeFormatOptions = {
-      hour: "2-digit",
-      minute: "2-digit",
-    };
-    if (h24 !== null) opts.hourCycle = h24 ? "h23" : "h12";
-    return now().toLocaleTimeString(navigator.language, opts);
+  const currentMethod = createMemo(() => {
+    const id = methodId();
+    return id ? getMethod(id) : undefined;
   });
 
   const locationPrimary = createMemo(() => {
-    const l = loc();
+    const l = location();
     if (l)
       return l.source === "gps"
         ? formatCoords(l.lat, l.lon)
@@ -288,7 +251,7 @@ function App() {
     return "No location";
   });
   const locationSecondary = createMemo(() => {
-    const l = loc();
+    const l = location();
     if (l) {
       if (l.source === "gps") {
         return gpsFetch() === "fetching"
@@ -303,112 +266,45 @@ function App() {
   });
 
   return (
-    <main class="app">
+    <main class={`app app-method-${methodId() ?? "none"}`}>
+      <Show when={currentMethod()}>
+        {(m) => <>{m().render(ctx)}</>}
+      </Show>
+
+      <Show when={currentMethod()}>
+        <button
+          class="method-pill"
+          onClick={() => setMethodPickerOpen(true)}
+          aria-label="Change method"
+        >
+          <span class="method-pill-label">Method</span>
+          <span class="method-pill-name">{currentMethod()!.name}</span>
+        </button>
+      </Show>
+
       <button
         class="location-pill"
-        onClick={() => setPickerOpen(true)}
+        onClick={() => setLocPickerOpen(true)}
         aria-label="Change location"
       >
         <span class="location-primary">{locationPrimary()}</span>
         <span class="location-secondary">{locationSecondary()}</span>
       </button>
 
-      <svg
-        class="dial-svg"
-        width={viewport().w}
-        height={viewport().h}
-        viewBox={`0 0 ${viewport().w} ${viewport().h}`}
-      >
-        <circle
-          cx={cx()}
-          cy={cy()}
-          r={radius()}
-          fill="none"
-          stroke="rgba(246,246,246,0.25)"
-          stroke-width="2"
+      <Show when={methodPickerOpen()}>
+        <MethodPicker
+          current={methodId()}
+          location={location()}
+          onPick={pickMethod}
+          onClose={methodId() ? () => setMethodPickerOpen(false) : undefined}
         />
-        <For each={TICK_ANGLES}>
-          {(angle) => {
-            const major = angle % 90 === 0;
-            const inner = radius() - (major ? 16 : 8);
-            const a = circlePoint(angle, cx(), cy(), inner);
-            const b = circlePoint(angle, cx(), cy(), radius());
-            return (
-              <line
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                stroke={
-                  major ? "rgba(246,246,246,0.55)" : "rgba(246,246,246,0.3)"
-                }
-                stroke-width={major ? 2.5 : 1.5}
-                stroke-linecap="round"
-              />
-            );
-          }}
-        </For>
-        <circle cx={cx()} cy={cy()} r="3" fill="rgba(246,246,246,0.7)" />
-      </svg>
-
-      <div
-        class={`marker ${swap() && hasLoc() ? "marker-sun" : "marker-n"}`}
-        style={{ left: `${topPos().x}px`, top: `${topPos().y}px` }}
-      >
-        {swap() && hasLoc() ? "☀️" : "N"}
-      </div>
-      <Show when={hasLoc()}>
-        <div
-          class={`marker ${swap() ? "marker-n" : "marker-sun"}`}
-          style={{ left: `${otherPos().x}px`, top: `${otherPos().y}px` }}
-        >
-          {swap() ? "N" : "☀️"}
-        </div>
       </Show>
 
-      <div class="footer">
-        <Show
-          when={hasLoc()}
-          fallback={
-            <div class="readout">
-              <div class="azimuth">
-                <span class="num">—</span>
-              </div>
-              <div class="sub">Set a location to see the sun</div>
-            </div>
-          }
-        >
-          <div class="readout">
-            <div class="azimuth">
-              <span class="num">{sunBearing().toFixed(0)}</span>
-              <span class="deg">°</span>
-            </div>
-            <div class="sub">Sun bearing from north</div>
-          </div>
-        </Show>
-        <div class="meta">
-          <span>{timeLabel()}</span>
-          <Show when={hasLoc()}>
-            <span class="dot">·</span>
-            <span>
-              {sunAltitude() < 0
-                ? "below horizon"
-                : `alt ${sunAltitude().toFixed(0)}°`}
-            </span>
-          </Show>
-        </div>
-        <Show when={hasLoc()}>
-          <button class="swap" onClick={() => setSwap((s) => !s)}>
-            {swap() ? "Show North at top" : "Show Sun at top"}
-          </button>
-        </Show>
-      </div>
-
-      <Show when={pickerOpen()}>
+      <Show when={locPickerOpen()}>
         <LocationPicker
           gpsPerm={gpsPerm()}
           gpsFetch={gpsFetch()}
-          onClose={() => setPickerOpen(false)}
+          onClose={() => setLocPickerOpen(false)}
           onUseGps={() => {
             requestGpsFix();
           }}
